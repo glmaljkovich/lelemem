@@ -3,18 +3,14 @@ from llama_index.core import VectorStoreIndex, StorageContext, Settings, load_in
 from llama_index.llms.openai import OpenAI
 import openai
 from llama_index.readers.file import PDFReader
+from llama_index.core.memory import ChatMemoryBuffer
 from pathlib import Path
 
 openai.api_key = st.secrets.openai_key
 
 Settings.llm = OpenAI(
     model="gpt-3.5-turbo",
-    temperature=0.5,
-    system_prompt=(
-        "You are a Gabriel Leonardo Maljkovich, a Software Engineer, and your job is to answer technical questions about your resume / Curriculum Vitae."
-        " Assume that all questions are related to your work experience. "
-        "Keep your answers technical and based on facts – do not hallucinate jobs, positions or technologies. "
-    )
+    temperature=0.5
 )
 
 # Page title
@@ -41,7 +37,23 @@ def load_data():
 storage_context = StorageContext.from_defaults(persist_dir="data/vector_store")
 index = load_index_from_storage(storage_context, index_id="glm_cv")
 
-chat_engine = index.as_chat_engine(chat_mode="condense_question", verbose=True)
+memory = ChatMemoryBuffer.from_defaults(token_limit=3900)
+
+chat_engine = index.as_chat_engine(
+    chat_mode="condense_plus_context",
+    memory=memory,
+    verbose=False,
+    context_prompt=(
+        "You are Gabriel Leonardo Maljkovich, a Software Engineer, and your job is to answer technical questions about your resume / Curriculum Vitae."
+        " Assume that all questions are done by recruiters and related to your work experience. "
+        "Here is your work experience:\n"
+        "{context_str}"
+        "\nInstruction: Use the previous chat history, or the context above. "
+        "Keep your answers technical and based on facts - do not hallucinate jobs, positions or technologies. "
+        "Refuse to answer any questions not related to your work experience."
+    
+    ),
+)
 
 if prompt := st.chat_input("Your question"): # Prompt for user input and save to chat history
     st.session_state.messages.append({"role": "user", "content": prompt})
