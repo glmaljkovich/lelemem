@@ -10,6 +10,8 @@ from llama_index.agent.openai import OpenAIAgent
 from llama_index.core.tools import QueryEngineTool
 from llama_index.readers.remote import RemoteReader
 
+
+
 openai.api_key = st.secrets.openai_key
 
 Settings.llm = OpenAI(
@@ -43,35 +45,31 @@ def load_data():
         index = VectorStoreIndex.from_documents(docs)
         index.set_index_id("glm_cv")
         index.storage_context.persist("./data/vector_store")
-        index2 = VectorStoreIndex.from_documents(docs)
-        index2.set_index_id("glm_cv_summary")
-        index2.storage_context.persist("./data/vector_store_summary")
-        return index, index2
+        summary_index = SummaryIndex.from_documents(docs)
+        summary_index.set_index_id("glm_cv_summary")
+        summary_index.storage_context.persist("./data/vector_store_summary")
+        return index, summary_index
 
 # llama index
 # index = load_data()
 
 # Resume
-storage_context = None
-storage_context_sum = None
+index, summary_index = None, None
 try:
     storage_context = StorageContext.from_defaults(persist_dir="data/vector_store")
     storage_context_sum = StorageContext.from_defaults(persist_dir="data/vector_store_summary")
-    index_loaded = True
+    index = load_index_from_storage(storage_context, index_id="glm_cv")
+    summary_index = load_index_from_storage(storage_context_sum, index_id="glm_cv_summary")
 except:
-    load_data()
-    storage_context = StorageContext.from_defaults(persist_dir="data/vector_store")
-    storage_context_sum = StorageContext.from_defaults(persist_dir="data/vector_store_summary")
-
-index = load_index_from_storage(storage_context, index_id="glm_cv")
-summary_index = load_index_from_storage(storage_context_sum, index_id="glm_cv_summary")
+    index, summary_index = load_data()
 
 query_engine = index.as_query_engine(
     llm=Settings.llm
 )
 
 summary_query_engine = summary_index.as_query_engine(
-    llm=Settings.llm
+    llm=Settings.llm,
+    response_mode="tree_summarize"
 )
 
 
@@ -79,7 +77,7 @@ summary_tool = QueryEngineTool.from_defaults(
     query_engine=summary_query_engine,
     name="summary_tool",
     description=(
-        "Useful for summarization questions related to the author's life"
+        "Useful for summarization questions related to Gabriel's work history from his Resume."
     ),
 )
 
@@ -93,11 +91,11 @@ resume_tool = QueryEngineTool.from_defaults(
 )
 
 # Github
-loader = RemoteReader()
 
 @st.cache_resource(show_spinner=False)
 def load_gh():
     with st.spinner(text="Loading GitHub history..."):
+        loader = RemoteReader()
         return loader.load_data(
             url="https://github.com/glmaljkovich?tab=repositories&q=&type=&language=&sort=stargazers"
         )
@@ -122,18 +120,10 @@ gh_tool = QueryEngineTool.from_defaults(
 
 agent = OpenAIAgent.from_tools(
     llm=Settings.llm,
-    tools=[gh_tool, resume_tool],
-    verbose=True,
-    system_prompt=(
-        "You are Gabriel Leonardo Maljkovich, a Software Engineer, and your job is to answer technical questions about your resume / Curriculum Vitae "
-        "and Github contributions. "
-        "Assume that all questions are done by recruiters and related to your work experience. "
-        "\nInstruction: "
-        "Keep your answers technical and based on facts - do not hallucinate jobs, positions or technologies. "
-        "Refuse to answer any questions not related to your work experience and contributions."
-        "You can use Markdown"
-    )
+    tools=[gh_tool, resume_tool, summary_tool],
+    verbose=False,
 )
+
 
 if prompt := st.chat_input("Your question"): # Prompt for user input and save to chat history
     st.session_state.messages.append({"role": "user", "content": prompt})
