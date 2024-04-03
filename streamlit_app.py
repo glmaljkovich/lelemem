@@ -1,9 +1,13 @@
 import streamlit as st
+import chromadb
+import openai
+from llama_index.vector_stores.chroma import ChromaVectorStore
 from llama_index.core import VectorStoreIndex, StorageContext, Settings, load_index_from_storage
 from llama_index.llms.openai import OpenAI
-import openai
 from llama_index.readers.file import PDFReader
+from llama_index.readers.remote import RemoteReader
 from llama_index.core.memory import ChatMemoryBuffer
+from llama_index.core.schema import IndexNode
 from pathlib import Path
 
 openai.api_key = st.secrets.openai_key
@@ -23,21 +27,88 @@ if "messages" not in st.session_state.keys(): # Initialize the chat message hist
     ]
 
 @st.cache_resource(show_spinner=False)
+def load_gh():
+    with st.spinner(text="Loading GitHub history..."):
+        loader = RemoteReader()
+        return loader.load_data(
+            url="https://github.com/glmaljkovich?tab=repositories&q=&type=&language=&sort=stargazers"
+        )
+
+@st.cache_resource(show_spinner=False)
 def load_data():
-    with st.spinner(text="Loading and indexing work history – hang tight! This should take 1-2 minutes."):
+    with st.spinner(text="Loading and indexing work history and Github page – hang tight! This should take 1-2 minutes."):
+        # Read Github Profile
+        gh_documents = load_gh()
+        gh_vector_index = VectorStoreIndex.from_documents(gh_documents)
+        gh_vector_index.set_index_id("glm_github")
+        gh_vector_index.storage_context.persist("./data/vector_store/glm_github")
+        gh_node = IndexNode(index_id="glm_github", text="Gabriel's Github profile", obj=gh_vector_index.as_query_engine())
+        # Parse CV
         reader = PDFReader()
         docs = reader.load_data(file=Path("./data/cv_gmaljkovich_english.pdf"))
-        index = VectorStoreIndex.from_documents(docs)
-        index.set_index_id("glm_cv")
-        index.storage_context.persist("./data/vector_store")
+        cv_index = VectorStoreIndex.from_documents(docs)
+        cv_index.set_index_id("glm_cv")
+        cv_index.storage_context.persist("./data/vector_store/glm_cv")
+        cv_node = IndexNode(index_id="glm_cv", text="Gabriel's work history", obj=cv_index.as_query_engine())
+        # Insert GH index into main index
+        index = VectorStoreIndex(objects=[cv_node, gh_node])
+        index.set_index_id("main")
+        
+        index.storage_context.persist("./data/vector_store/main")
         return index
 
-# llama index
-# index = load_data()
-storage_context = StorageContext.from_defaults(persist_dir="data/vector_store")
-index = load_index_from_storage(storage_context, index_id="glm_cv")
+@st.cache_resource(show_spinner=False)
+def load_db():
+    with st.spinner(text="Loading and indexing work history and Github page – hang tight! This should take 1-2 minutes."):
+        db = chromadb.PersistentClient(path="./data/chroma_db")
+        # Read Github Profile
+        gh_documents = load_gh()
+        gh_store = ChromaVectorStore(chroma_collection=db.get_or_create_collection("github"))
+        gh_context = StorageContext.from_defaults(vector_store=gh_store)
+        gh_index = VectorStoreIndex.from_documents(gh_documents, storage_context=gh_context)
+        gh_node = IndexNode(index_id="github", text="Gabriel's Github profile", obj=gh_index.as_retriever(similarity_top_k=3))
+        # Parse CV
+        reader = PDFReader()
+        cv_documents = reader.load_data(file=Path("./data/cv_gmaljkovich_english.pdf"))
+        cv_store = ChromaVectorStore(chroma_collection=db.get_or_create_collection("resume"))
+        cv_context = StorageContext.from_defaults(vector_store=cv_store)
+        cv_index = VectorStoreIndex.from_documents(cv_documents, storage_context=cv_context)
+        cv_node = IndexNode(index_id="resume", text="Gabriel's work history", obj=cv_index.as_retriever())
+        # Build main index
+        index = VectorStoreIndex(objects=[cv_node, gh_node])
+        index.set_index_id("main")
+        return index
 
-memory = ChatMemoryBuffer.from_defaults(token_limit=3900)
+@st.cache_resource(show_spinner=False)
+def read_db():
+    db = chromadb.PersistentClient(path="./data/chroma_db")
+    github_store = ChromaVectorStore(chroma_collection=db.get_collection("github"))
+    gh_index = VectorStoreIndex.from_vector_store(github_store)
+    gh_node = IndexNode(index_id="github", text="Gabriel's Github profile", obj=gh_index.as_retriever(similarity_top_k=3))
+
+    cv_store = ChromaVectorStore(chroma_collection=db.get_collection("resume"))
+    cv_index = VectorStoreIndex.from_vector_store(cv_store)
+    cv_node = IndexNode(index_id="resume", text="Gabriel's work history", obj=cv_index.as_retriever())
+    # Build main index
+    index = VectorStoreIndex(objects=[cv_node, gh_node])
+    index.set_index_id("main")
+    return index
+
+# load data if needed
+# index = load_data()
+index = None
+# try:
+#     storage_context = StorageContext.from_defaults(persist_dir="data/vector_store")
+#     index = load_index_from_storage(storage_context, index_id="main")
+# except:
+#     index = load_data()
+
+try:
+    index = read_db()
+except:
+    index = load_db()
+
+memory = ChatMemoryBuffer.from_defaults(token_limit=10000)
 
 chat_engine = index.as_chat_engine(
     chat_mode="condense_plus_context",
@@ -70,3 +141,5 @@ if st.session_state.messages[-1]["role"] != "assistant":
             st.write(response.response)
             message = {"role": "assistant", "content": response.response}
             st.session_state.messages.append(message) # Add response to message history
+
+# prompt: Show me a table with your work history.
