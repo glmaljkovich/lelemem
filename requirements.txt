@@ -1,6 +1,7 @@
 streamlit==1.29.0
 openai
 llama-index
+llama-index-vector-stores-chroma
 nltk
 chromadb
 pysqlite3-binary

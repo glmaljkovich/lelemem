@@ -1,12 +1,13 @@
+# workaround for sqlite in streamlit
+__import__('pysqlite3')
+import sys
+sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
+
 import streamlit as st
 import openai
 from llama_index.core import Settings
 from llama_index.llms.openai import OpenAI
 from llama_index.agent.openai import OpenAIAgent
-# workaround for sqlite in streamlit
-__import__('pysqlite3')
-import sys
-sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
 
 # local imports
 from app.db import load_cv, read_cv, default_client
