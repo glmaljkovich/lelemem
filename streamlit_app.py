@@ -21,10 +21,15 @@ Settings.llm = OpenAI(
 st.set_page_config(page_title='AI Resume', page_icon='🤖')
 st.title('🤖 AI Resumé')
 
+# render sample questions
+button_text = "Show me a table with your work history.", "Show me a list with the Github repos you contributed to."
+
 if "messages" not in st.session_state.keys(): # Initialize the chat message history
     st.session_state.messages = [
         {"role": "assistant", "content": "Hi, I'm Gabriel. Ask me a question about my work experience!"}
     ]
+
+# Data loaders
 
 @st.cache_resource(show_spinner=False)
 def load_gh():
@@ -66,7 +71,7 @@ def load_db():
         gh_store = ChromaVectorStore(chroma_collection=db.get_or_create_collection("github"))
         gh_context = StorageContext.from_defaults(vector_store=gh_store)
         gh_index = VectorStoreIndex.from_documents(gh_documents, storage_context=gh_context)
-        gh_node = IndexNode(index_id="github", text="Gabriel's Github profile", obj=gh_index.as_retriever(similarity_top_k=3))
+        gh_node = IndexNode(index_id="github", text="Gabriel's Github profile", obj=gh_index.as_query_engine())
         # Parse CV
         reader = PDFReader()
         cv_documents = reader.load_data(file=Path("./data/cv_gmaljkovich_english.pdf"))
@@ -84,7 +89,7 @@ def read_db():
     db = chromadb.PersistentClient(path="./data/chroma_db")
     github_store = ChromaVectorStore(chroma_collection=db.get_collection("github"))
     gh_index = VectorStoreIndex.from_vector_store(github_store)
-    gh_node = IndexNode(index_id="github", text="Gabriel's Github profile", obj=gh_index.as_retriever(similarity_top_k=3))
+    gh_node = IndexNode(index_id="github", text="Gabriel's Github profile", obj=gh_index.as_query_engine())
 
     cv_store = ChromaVectorStore(chroma_collection=db.get_collection("resume"))
     cv_index = VectorStoreIndex.from_vector_store(cv_store)
@@ -126,8 +131,15 @@ chat_engine = index.as_chat_engine(
     ),
 )
 
+# Chat loop
+
 if prompt := st.chat_input("Your question"): # Prompt for user input and save to chat history
     st.session_state.messages.append({"role": "user", "content": prompt})
+
+for text, col in zip(button_text, st.columns(len(button_text))):
+    if col.button(text):
+        st.session_state.messages.append({"role": "user", "content": text})
+        prompt = text
 
 for message in st.session_state.messages: # Display the prior chat messages
     with st.chat_message(message["role"]):
@@ -143,3 +155,4 @@ if st.session_state.messages[-1]["role"] != "assistant":
             st.session_state.messages.append(message) # Add response to message history
 
 # prompt: Show me a table with your work history.
+# prompt: Show me a list with the Github repos you contributed to.
